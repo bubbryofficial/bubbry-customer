@@ -29,7 +29,7 @@ export default function PrivacyPage() {
       </div>
       <div className="page">
         <h1>Privacy Policy</h1>
-        <div className="last-updated">Last updated: {DATE} · Compliant with IT Act 2000 & PDPB 2023</div>
+        <div className="last-updated">Last updated: {DATE} · Compliant with IT Act 2000 &amp; PDPB 2023</div>
         <div className="card">
           <h2>1. Information We Collect</h2>
           <p>We collect the following when you use Bubbry:</p>
@@ -65,7 +65,7 @@ export default function PrivacyPage() {
           </ul>
         </div>
         <div className="card">
-          <h2>4. Data Retention & Deletion</h2>
+          <h2>4. Data Retention &amp; Deletion</h2>
           <ul>
             <li>Personal data deleted within 30 days of account closure</li>
             <li>Order records retained 7 years for tax/legal compliance</li>

@@ -28,7 +28,7 @@ export default function RefundPage() {
         <div className="title">Refund Policy</div>
       </div>
       <div className="page">
-        <h1>Refund & Cancellation Policy</h1>
+        <h1>Refund &amp; Cancellation Policy</h1>
         <div className="last-updated">Last updated: {DATE}</div>
         <div className="warning"><p>⚠️ Please read carefully before placing an order. Placing an order indicates your acceptance of this policy.</p></div>
         <div className="card">
