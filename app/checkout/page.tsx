@@ -89,11 +89,60 @@ export default function CheckoutPage() {
   const [screenshotPreview, setScreenshotPreview] = useState("");
   const [loading, setLoading] = useState(false);
   const [placing, setPlacing] = useState(false);
+  const [deliveryLat, setDeliveryLat] = useState<number|null>(null);
+  const [deliveryLng, setDeliveryLng] = useState<number|null>(null);
+  const [deliveryInstructions, setDeliveryInstructions] = useState("");
 
   useEffect(() => {
     const saved = localStorage.getItem("bubbry_cart");
     const savedType = localStorage.getItem("bubbry_order_type") || "pickup";
     const savedAddress = localStorage.getItem("bubbry_address") || "";
+    (async () => {
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (session?.user) {
+          const uid = session.user.id;
+
+          // Check for open fraud dispute against this customer — blocks ordering
+          const { data: openDispute } = await supabase
+            .from("disputes")
+            .select("id")
+            .eq("customer_id", uid)
+            .eq("status", "open")
+            .eq("reason", "fraud_customer")
+            .limit(1)
+            .maybeSingle();
+
+          if (openDispute) {
+            window.location.href = "/customer-dashboard?restricted=1";
+            return;
+          }
+
+          const { data } = await supabase.from("profiles")
+            .select("default_lat,default_lng,default_address,default_instructions,banned")
+            .eq("id", uid).single();
+
+          if (data?.banned) {
+            await supabase.auth.signOut();
+            window.location.href = "/login?banned=1";
+            return;
+          }
+
+          if (data?.default_lat) { setDeliveryLat(data.default_lat); localStorage.setItem("bubbry_delivery_lat", data.default_lat.toString()); }
+          if (data?.default_lng) { setDeliveryLng(data.default_lng); localStorage.setItem("bubbry_delivery_lng", data.default_lng.toString()); }
+          if (data?.default_instructions) { setDeliveryInstructions(data.default_instructions); localStorage.setItem("bubbry_delivery_instructions", data.default_instructions); }
+          if (data?.default_address) { setAddress(data.default_address); }
+        }
+      } catch {
+        const savedLat = localStorage.getItem("bubbry_delivery_lat");
+        const savedLng = localStorage.getItem("bubbry_delivery_lng");
+        const savedInstr = localStorage.getItem("bubbry_delivery_instructions");
+        if (savedLat) setDeliveryLat(parseFloat(savedLat));
+        if (savedLng) setDeliveryLng(parseFloat(savedLng));
+        if (savedInstr) setDeliveryInstructions(savedInstr);
+        if (savedAddress) setAddress(savedAddress);
+      }
+    })();
     if (saved) {
       const cartData = JSON.parse(saved);
       setCart(cartData);
@@ -137,8 +186,10 @@ export default function CheckoutPage() {
   }
 
   async function placeOrder() {
-    if (orderType === "delivery" && !address.trim()) { alert("Enter delivery address"); return; }
-    // Screenshot is mandatory — button should already be disabled, but double check
+    if (orderType === "delivery" && (!address.trim() || !deliveryLat || !deliveryLng)) {
+      alert("Please pin your delivery location on the map first. Tap 'Change' to open the map.");
+      return;
+    }
     if (!screenshotFile) {
       alert("Please upload your payment screenshot to place the order.");
       return;
@@ -147,11 +198,36 @@ export default function CheckoutPage() {
 
     const { data: { session } } = await supabase.auth.getSession();
     const user = session?.user;
-    if (!user) { 
+    if (!user) {
       alert("Your session has expired. Please login again.");
       window.location.href = "/login";
-      setPlacing(false); 
-      return; 
+      setPlacing(false);
+      return;
+    }
+
+    // Hard gate — check for open fraud dispute at order submission time
+    const { data: openDispute } = await supabase
+      .from("disputes")
+      .select("id")
+      .eq("customer_id", user.id)
+      .eq("status", "open")
+      .eq("reason", "fraud_customer")
+      .limit(1)
+      .maybeSingle();
+
+    if (openDispute) {
+      setPlacing(false);
+      alert("⚠️ Your account is temporarily restricted.\n\nA payment dispute is pending review against your account. You cannot place new orders until it is resolved.\n\nOur team will contact you within 24 hours.");
+      window.location.href = "/customer-dashboard?restricted=1";
+      return;
+    }
+
+    const { data: profileCheck } = await supabase.from("profiles")
+      .select("banned").eq("id", user.id).single();
+    if (profileCheck?.banned) {
+      await supabase.auth.signOut();
+      window.location.href = "/login?banned=1";
+      return;
     }
 
     // Upload payment screenshot if provided
@@ -170,15 +246,22 @@ export default function CheckoutPage() {
       paymentProofUrl = urlData.publicUrl;
     }
 
+    // Generate a single group_id for all items in this order
+    const groupId = crypto.randomUUID();
     let anyFailed = false;
     for (const item of cart) {
       const { error } = await supabase.from("orders").insert({
+        group_id: groupId,
         product_id: item.product_id,
         shop_id: item.shop_id,
         customer_id: user.id,
         quantity: item.quantity ?? 1,
         order_type: orderType,
         delivery_address: orderType === "delivery" ? address : null,
+        delivery_instructions: orderType === "delivery" ? deliveryInstructions : null,
+        delivery_lat: orderType === "delivery" ? deliveryLat : null,
+        delivery_lng: orderType === "delivery" ? deliveryLng : null,
+        customer_id: user.id,
         status: "pending",
         payment_method: paymentMethod,
         payment_proof: paymentProofUrl,
@@ -195,7 +278,16 @@ export default function CheckoutPage() {
     if (!anyFailed) {
       localStorage.removeItem("bubbry_cart");
       localStorage.removeItem("bubbry_order_type");
-      localStorage.removeItem("bubbry_address");
+      // Keep address in localStorage and profile for next order
+      // Save to profile
+      if (orderType === "delivery" && deliveryLat && deliveryLng) {
+        supabase.from("profiles").update({
+          default_address: address,
+          default_lat: deliveryLat,
+          default_lng: deliveryLng,
+          default_instructions: deliveryInstructions,
+        }).eq("id", user.id);
+      }
       router.push("/order-success");
     }
     setPlacing(false);
@@ -203,7 +295,8 @@ export default function CheckoutPage() {
 
   // Screenshot is ALWAYS required — order cannot be placed without it
   const screenshotRequired = !!shopUpi; // only required if shop has UPI set up
-  const canPlace = !placing && screenshotFile !== null;
+  const hasLocation = orderType !== "delivery" || (deliveryLat !== null && deliveryLng !== null && address.trim());
+  const canPlace = !placing && screenshotFile !== null && hasLocation;
 
   return (
     <div className="page">

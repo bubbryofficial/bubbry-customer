@@ -64,6 +64,15 @@ export default function Signup() {
   async function sendOtp() {
     if (phone.replace(/\D/g, "").length < 10) { alert("Enter a valid 10-digit phone number"); return; }
     setLoading(true);
+        // Block duplicate customer role
+    const { data: existingProfiles } = await supabase
+      .from("profiles").select("id, role").eq("phone", fullPhone);
+    const alreadyCustomer = (existingProfiles || []).find((p: any) => p.role === "customer");
+    if (alreadyCustomer) {
+      alert("A customer account already exists with this number. Please log in instead.");
+      setLoading(false);
+      return;
+    }
     const { error } = await supabase.auth.signInWithOtp({ phone: fullPhone });
     if (error) { alert("Could not send OTP: " + error.message); setLoading(false); return; }
     setLoading(false); startTimer(); setStep("otp");

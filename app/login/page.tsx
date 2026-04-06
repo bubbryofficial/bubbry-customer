@@ -58,10 +58,27 @@ export default function Login() {
   async function handleEmailLogin() {
     if (!email || !password) { alert("Fill all fields"); return; }
     setLoading(true);
-    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
-    if (error) { alert(error.message); setLoading(false); return; }
+    try {
+      const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+      if (error) {
+        if (error.message?.includes("fetch") || error.message?.includes("network")) {
+          alert("Network error — check your connection and try again.");
+        } else {
+          alert(error.message);
+        }
+        setLoading(false); return;
+      }
     if (data?.session?.user) {
+      localStorage.removeItem("bubbry_address");
+      localStorage.removeItem("bubbry_delivery_lat");
+      localStorage.removeItem("bubbry_delivery_lng");
+      localStorage.removeItem("bubbry_delivery_instructions");
+      localStorage.removeItem("bubbry_cart");
+      localStorage.removeItem("bubbry_order_type");
       await redirectByRole(data.session.user.id);
+    }
+    } catch (err: any) {
+      alert("Login failed: " + (err?.message || "Network error. Please try again."));
     }
     setLoading(false);
   }
@@ -69,6 +86,25 @@ export default function Login() {
   async function sendPhoneOtp() {
     if (phone.replace(/\D/g, "").length < 10) { alert("Enter a valid 10-digit number"); return; }
     setLoading(true);
+    // Check all profiles with this phone
+    const { data: profiles } = await supabase
+      .from("profiles")
+      .select("id, role")
+      .eq("phone", fullPhone);
+    if (!profiles || profiles.length === 0) {
+      alert("This number is not registered. Please sign up first.");
+      setLoading(false);
+      return;
+    }
+    const custProfile = profiles.find((p: any) => p.role === "customer");
+    if (!custProfile) {
+      // Has shopkeeper account but no customer — offer to sign up as customer
+      if (confirm("This number has a shopkeeper account but no customer account.\n\nDo you want to register as a customer with this number?")) {
+        router.push("/signup");
+      }
+      setLoading(false);
+      return;
+    }
     const { error } = await supabase.auth.signInWithOtp({ phone: fullPhone });
     if (error) { alert("Could not send OTP: " + error.message); setLoading(false); return; }
     setLoading(false);
@@ -83,10 +119,16 @@ export default function Login() {
     if (error) { alert("Invalid OTP: " + error.message); setLoading(false); return; }
     // Wait for session to be fully set before redirecting
     if (data.user) {
+      // Clear previous user's localStorage data before loading new session
+      localStorage.removeItem("bubbry_address");
+      localStorage.removeItem("bubbry_delivery_lat");
+      localStorage.removeItem("bubbry_delivery_lng");
+      localStorage.removeItem("bubbry_delivery_instructions");
+      localStorage.removeItem("bubbry_cart");
+      localStorage.removeItem("bubbry_order_type");
       // Check if profile exists, create if new user
       const { data: profile } = await supabase.from("profiles").select("id, role").eq("id", data.user.id).single();
       if (!profile) {
-        // New user via OTP — create basic customer profile
         await supabase.from("profiles").upsert({
           id: data.user.id,
           phone: fullPhone,
