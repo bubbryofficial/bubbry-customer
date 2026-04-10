@@ -1,13 +1,9 @@
 "use client";
+import { supabase } from "../../lib/supabase";
 
 import { useEffect, useState } from "react";
-import { createClient } from "@supabase/supabase-js";
 import { useRouter } from "next/navigation";
 
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-);
 
 const CSS = `
 @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&display=swap');
@@ -261,6 +257,7 @@ export default function CheckoutPage() {
         delivery_instructions: orderType === "delivery" ? deliveryInstructions : null,
         delivery_lat: orderType === "delivery" ? deliveryLat : null,
         delivery_lng: orderType === "delivery" ? deliveryLng : null,
+        customer_id: user.id,
         status: "pending",
         payment_method: paymentMethod,
         payment_proof: paymentProofUrl,

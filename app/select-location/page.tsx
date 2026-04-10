@@ -1,4 +1,5 @@
 "use client";
+import { supabase } from "../../lib/supabase";
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
@@ -149,8 +150,7 @@ export default function SelectLocationPage() {
     localStorage.setItem("bubbry_delivery_instructions", instructions);
     // Save to DB as a new saved address
     try {
-      const { createClient } = await import("@supabase/supabase-js");
-      const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!);
+      const sb = supabase;
       const { data: { session } } = await sb.auth.getSession();
       if (session?.user) {
         // Check how many addresses already saved

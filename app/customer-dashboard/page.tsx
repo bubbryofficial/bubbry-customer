@@ -1,13 +1,9 @@
 "use client";
+import { supabase } from "../../lib/supabase";
 
 import { useState, useEffect, useRef, Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
-import { createClient } from "@supabase/supabase-js";
 
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-);
 
 const CAT_ICONS: Record<string, string> = {
   "Dairy, Bread & Eggs":"🥛","Fruits & Vegetables":"🥦","Snacks & Munchies":"🍿",
@@ -668,8 +664,6 @@ function CustomerDashboardInner() {
   }
 
   async function handleLogout() {
-    const { createClient } = await import("@supabase/supabase-js");
-    const supabase = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!);
     await supabase.auth.signOut();
     // Clear ALL user-specific data from localStorage
     localStorage.removeItem("bubbry_cart");
