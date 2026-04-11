@@ -1,7 +1,7 @@
 "use client";
 import { supabase } from "../../lib/supabase";
 
-import { useState } from "react";
+import { useState, useEffect, useEffect } from "react";
 import { useRouter } from "next/navigation";
 
 
@@ -39,6 +39,15 @@ export default function Login() {
   const [resendTimer, setResendTimer] = useState(0);
 
   const fullPhone = "+91" + phone.replace(/\D/g, "");
+
+  // Check existing session on mount - redirect to dashboard if already logged in
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session?.user) {
+        router.replace("/customer-dashboard");
+      }
+    });
+  }, []);
 
   function startResendTimer() {
     setResendTimer(30);
