@@ -257,7 +257,6 @@ export default function CheckoutPage() {
         delivery_instructions: orderType === "delivery" ? deliveryInstructions : null,
         delivery_lat: orderType === "delivery" ? deliveryLat : null,
         delivery_lng: orderType === "delivery" ? deliveryLng : null,
-        customer_id: user.id,
         status: "pending",
         payment_method: paymentMethod,
         payment_proof: paymentProofUrl,
