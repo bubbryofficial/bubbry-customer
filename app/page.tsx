@@ -26,14 +26,14 @@ export default function Home() {
       padding: "40px 24px",
       fontFamily: "'Plus Jakarta Sans', sans-serif",
     }}>
-      <style>{\`
+      <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&display=swap');
         * { box-sizing: border-box; }
         .hero-btn { display: inline-flex; align-items: center; justify-content: center; padding: 16px 32px; border-radius: 14px; font-size: 16px; font-weight: 800; text-decoration: none; transition: all 0.2s; font-family: 'Plus Jakarta Sans', sans-serif; }
         .hero-btn:hover { transform: translateY(-2px); }
         .feature-pill { display: inline-flex; align-items: center; gap: 6px; background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.15); padding: 6px 14px; border-radius: 20px; font-size: 13px; font-weight: 600; color: rgba(255,255,255,0.85); }
         .bubble { position: absolute; border-radius: 50%; background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08); }
-      \`}</style>
+      `}</style>
       <div style={{ position: "absolute", inset: 0, overflow: "hidden", pointerEvents: "none" }}>
         <div className="bubble" style={{ width: 300, height: 300, top: -80, right: -80 }} />
         <div className="bubble" style={{ width: 200, height: 200, bottom: 100, left: -60 }} />
