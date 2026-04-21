@@ -324,6 +324,7 @@ function CustomerDashboardInner() {
   const [featuredShops, setFeaturedShops] = useState<any[]>([]);
   const [sponsoredProducts, setSponsoredProducts] = useState<any[]>([]);
   const [wishlistIds, setWishlistIds] = useState<Set<string>>(new Set());
+  const [looseAmounts, setLooseAmounts] = useState<Record<string,string>>({}); // productKey -> ₹ amount
   const [bookmarkIds, setBookmarkIds] = useState<Set<string>>(new Set());
   const [notifCount, setNotifCount] = useState(0);
   const [sponsoredProductIds, setSponsoredProductIds] = useState<Set<string>>(new Set());
@@ -332,6 +333,7 @@ function CustomerDashboardInner() {
   const sponsoredProductIdsRef = useRef<Set<string>>(new Set());
   const rawProductsRef = useRef<any[]>([]); // unmodified products for re-processing
   const allProductsRef = useRef<any[]>([]); // all live shop products, no distance cap — for search
+  const looseProductsRef = useRef<any[]>([]); // loose products always available for search
 
   useEffect(() => {
     const saved = localStorage.getItem("bubbry_cart");
@@ -343,7 +345,36 @@ function CustomerDashboardInner() {
     fetchCategories();
     loadUserData();
     let userLat: number|undefined, userLng: number|undefined;
-    if (navigator.geolocation) {
+
+    // Priority 1: Use saved delivery address location (most accurate for the customer)
+    const savedDeliveryLat = parseFloat(localStorage.getItem("bubbry_delivery_lat") || "");
+    const savedDeliveryLng = parseFloat(localStorage.getItem("bubbry_delivery_lng") || "");
+
+    if (savedDeliveryLat && savedDeliveryLng && !isNaN(savedDeliveryLat) && !isNaN(savedDeliveryLng)) {
+      // Use delivery address as the reference point
+      userLat = savedDeliveryLat;
+      userLng = savedDeliveryLng;
+      setUserLat(userLat);
+      setUserLng(userLng);
+      fetchProducts(userLat, userLng);
+      fetchShops(userLat, userLng);
+      fetchAds(userLat, userLng);
+      // Also watch GPS in background in case delivery address changes
+      if (navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition(
+          (pos) => {
+            // Only update if no delivery address was set (fallback)
+            const stillSaved = localStorage.getItem("bubbry_delivery_lat");
+            if (!stillSaved) {
+              userLat = pos.coords.latitude; userLng = pos.coords.longitude;
+              setUserLat(userLat); setUserLng(userLng);
+            }
+          },
+          () => {}
+        );
+      }
+    } else if (navigator.geolocation) {
+      // Priority 2: Use device GPS if no delivery address saved
       navigator.geolocation.getCurrentPosition(
         (pos) => {
           userLat = pos.coords.latitude; userLng = pos.coords.longitude;
@@ -354,7 +385,9 @@ function CustomerDashboardInner() {
         },
         () => { fetchProducts(); fetchShops(); fetchAds(); }
       );
-    } else fetchProducts();
+    } else {
+      fetchProducts(); fetchShops(); fetchAds();
+    }
 
     // Realtime — refresh products/shops when inventory or profiles change
     const rt1 = supabase.channel("dash-products-rt")
@@ -371,9 +404,25 @@ function CustomerDashboardInner() {
       fetchProducts(userLat, userLng, true); // silent=true: no loading state, no scroll
     }, 15000);
 
+    // Re-fetch when delivery address is updated in another tab/component
+    function onStorageChange(e: StorageEvent) {
+      if (e.key === "bubbry_delivery_lat" || e.key === "bubbry_delivery_lng") {
+        const newLat = parseFloat(localStorage.getItem("bubbry_delivery_lat") || "");
+        const newLng = parseFloat(localStorage.getItem("bubbry_delivery_lng") || "");
+        if (!isNaN(newLat) && !isNaN(newLng)) {
+          setUserLat(newLat); setUserLng(newLng);
+          fetchProducts(newLat, newLng);
+          fetchShops(newLat, newLng);
+          fetchAds(newLat, newLng);
+        }
+      }
+    }
+    window.addEventListener("storage", onStorageChange);
+
     return () => {
       supabase.removeChannel(rt1);
       clearInterval(poll);
+      window.removeEventListener("storage", onStorageChange);
     };
   }, []);
 
@@ -394,11 +443,16 @@ function CustomerDashboardInner() {
     setSearchLoading(true);
     const timer = setTimeout(async () => {
       // 1. Search master_products directly by name (ilike for partial match)
-      const { data: mpData } = await supabase
-        .from("master_products")
-        .select("id, name, size, image_url, category, brand")
-        .ilike("name", `%${q}%`)
-        .limit(60);
+      // Search master_products by name AND brand AND category
+      const [nameRes, brandRes, catRes] = await Promise.all([
+        supabase.from("master_products").select("id, name, size, image_url, category, brand").ilike("name", `%${q}%`).limit(40),
+        supabase.from("master_products").select("id, name, size, image_url, category, brand").ilike("brand", `%${q}%`).limit(20),
+        supabase.from("master_products").select("id, name, size, image_url, category, brand").ilike("category", `%${q}%`).limit(20),
+      ]);
+      // Merge and deduplicate by id
+      const seenIds = new Set<string>();
+      const mpData = [...(nameRes.data||[]), ...(brandRes.data||[]), ...(catRes.data||[])]
+        .filter((p: any) => { if (seenIds.has(p.id)) return false; seenIds.add(p.id); return true; });
 
       if (!mpData || mpData.length === 0) {
         setMasterSearchResults([]);
@@ -456,7 +510,23 @@ function CustomerDashboardInner() {
         return (a.distance ?? 999) - (b.distance ?? 999);
       });
 
-      setMasterSearchResults(merged);
+      // Include loose products directly from dedicated ref (always populated)
+      const looseMatches = looseProductsRef.current
+        .filter((p: any) =>
+          (p.name ?? "").toLowerCase().includes(q.toLowerCase()) ||
+          (p.loose_unit ?? "").toLowerCase().includes(q.toLowerCase()) ||
+          q.toLowerCase().includes("loose") || q.toLowerCase().includes("bulk")
+        );
+
+      // Merge loose products with master results (no duplicates)
+      const allResults = [...merged, ...looseMatches];
+      allResults.sort((a: any, b: any) => {
+        if (a.inStock && !b.inStock) return -1;
+        if (!a.inStock && b.inStock) return 1;
+        return (a.distance ?? 999) - (b.distance ?? 999);
+      });
+
+      setMasterSearchResults(allResults);
       setSearchLoading(false);
     }, 300);
 
@@ -705,11 +775,11 @@ function CustomerDashboardInner() {
   async function fetchProducts(lat?: number, lng?: number, silent = false) {
     if (!silent) setLoading(true);
 
-    // Fetch ALL shop_products (including out-of-stock) so filters and search work fully
+    // Fetch ALL shop_products including loose products
     const { data: spData } = await supabase
       .from("shop_products")
-      .select("id, price, stock, product_id, shop_id, name, size")
-      .gte("stock", 0); // include zero-stock items
+      .select("id, price, stock, product_id, shop_id, name, size, is_loose, loose_unit, loose_min_qty, loose_max_qty, price_per_unit")
+      .gte("stock", 0);
 
     if (!spData || spData.length === 0) {
       if (!silent) { setProducts([]); setLoading(false); }
@@ -720,18 +790,18 @@ function CustomerDashboardInner() {
     const shopIds = [...new Set(spData.map((r:any) => r.shop_id).filter(Boolean))];
     const { data: shopData } = shopIds.length > 0
       ? await supabase.from("profiles")
-          .select("id, name, shop_name, latitude, longitude, is_live, offers_delivery, offers_pickup")
+          .select("id, name, shop_name, latitude, longitude, is_live, offers_delivery, offers_pickup, delivery_range_km")
           .in("id", shopIds)
           .eq("is_live", true)
       : { data: [] };
 
-    const MAX_KM = 2;
     const shopMap: any = {};
     (shopData||[]).forEach((s:any) => {
-      // Only include shops within 2km radius if user location is available
       if (lat && lng && s.latitude && s.longitude) {
         const dist = distance(lat, lng, s.latitude, s.longitude);
-        if (dist > MAX_KM) return; // skip shops beyond 2km
+        // Use shop's own delivery range (default 2km, max 2km)
+        const shopRangeKm = Math.min(s.delivery_range_km || 2, 2);
+        if (dist > shopRangeKm) return; // skip shops outside their delivery range
       }
       shopMap[s.id] = s;
     });
@@ -756,6 +826,35 @@ function CustomerDashboardInner() {
         ? distance(lat, lng, shop.latitude, shop.longitude) : 0;
       spByProduct[sp.product_id].push({ ...sp, dist, shop });
     });
+
+    // Separate loose products (no product_id) into their own list
+    const looseProducts: any[] = (spData || [])
+      .filter((sp: any) => sp.is_loose && !sp.product_id && shopMap[sp.shop_id])
+      .map((sp: any) => {
+        const shop = shopMap[sp.shop_id];
+        return {
+          id: sp.id,
+          product_id: sp.id, // use shop_products.id as key
+          name: sp.name,
+          size: `Per ${sp.loose_unit || "kg"}`,
+          price: sp.price,
+          price_per_unit: sp.price_per_unit || sp.price,
+          stock: sp.stock,
+          inStock: (sp.stock ?? 0) > 0,
+          image_url: "",
+          category: "Loose Products",
+          brand: "",
+          shop_id: sp.shop_id,
+          shop_name: shop?.shop_name || shop?.name || "Shop",
+          distance: shop?.dist || 0,
+          is_loose: true,
+          loose_unit: sp.loose_unit || "kg",
+          loose_min_qty: sp.loose_min_qty || 0.25,
+          loose_max_qty: sp.loose_max_qty || 10,
+          shopOptions: [],
+          _sponsored: false,
+        };
+      });
 
     const items: any[] = Object.entries(spByProduct).map(([productId, shopOptions]: [string, any[]]) => {
       const mp = mpMap[productId] || {};
@@ -810,7 +909,8 @@ function CustomerDashboardInner() {
       return a.distance - b.distance;
     });
     // Apply sponsored shop override immediately if ads already loaded
-    const withSponsored = applySponsoredOverride(items);
+    looseProductsRef.current = looseProducts;
+    const withSponsored = applySponsoredOverride([...items, ...looseProducts]);
     // For silent refreshes: save scroll position before state update, restore after
     if (silent && contentRef.current) {
       scrollSaveRef.current = contentRef.current.scrollTop;
@@ -824,21 +924,46 @@ function CustomerDashboardInner() {
       });
     }
     // Store raw items so we can re-apply when ads load
-    rawProductsRef.current = items;
+    rawProductsRef.current = [...items, ...looseProducts];
 
     // Build allProductsRef — same product list but WITHOUT 2km cap, for search
     // Include all live shops regardless of distance
     const allShopMap: any = {};
     (shopData||[]).forEach((s:any) => { allShopMap[s.id] = s; }); // shopData already has all live shops
-    const allSpData = spData.filter((sp:any) => allShopMap[sp.shop_id]);
+    const allSpData = spData.filter((sp:any) => allShopMap[sp.shop_id] && !sp.is_loose);
     const allByProduct: Record<string, any[]> = {};
     allSpData.forEach((sp:any) => {
+      if (!sp.product_id) return; // skip loose products here
       const shop = allShopMap[sp.shop_id];
       const dist = (lat && lng && shop?.latitude && shop?.longitude)
         ? distance(lat, lng, shop.latitude, shop.longitude) : 999;
       if (!allByProduct[sp.product_id]) allByProduct[sp.product_id] = [];
       allByProduct[sp.product_id].push({ ...sp, dist, shop });
     });
+    // Add loose products to allProductsRef for search
+    const looseForSearch = (spData || [])
+      .filter((sp:any) => sp.is_loose && !sp.product_id && allShopMap[sp.shop_id])
+      .map((sp:any) => {
+        const shop = allShopMap[sp.shop_id];
+        const dist = (lat && lng && shop?.latitude && shop?.longitude)
+          ? distance(lat, lng, shop.latitude, shop.longitude) : 999;
+        return {
+          id: sp.id, product_id: sp.id, name: sp.name,
+          size: `Per ${sp.loose_unit || "kg"}`, price: sp.price,
+          price_per_unit: sp.price_per_unit || sp.price,
+          stock: sp.stock ?? 999, inStock: (sp.stock ?? 0) > 0 || sp.stock === null,
+          image_url: "", category: "Loose Products",
+          brand: "", shop_id: sp.shop_id,
+          shop_name: shop?.shop_name || shop?.name || "",
+          distance: dist, is_loose: true, loose_unit: sp.loose_unit || "kg",
+          loose_min_qty: sp.loose_min_qty || 0.25,
+          loose_max_qty: sp.loose_max_qty || 10,
+          offersDelivery: shop?.offers_delivery ?? false,
+          offersPickup: shop?.offers_pickup ?? true,
+          shopOptions: [],
+        };
+      });
+
     allProductsRef.current = Object.entries(allByProduct).map(([productId, opts]: [string, any[]]) => {
       const mp = mpMap[productId] || {};
       opts.sort((a:any,b:any) => a.dist - b.dist);
@@ -873,18 +998,22 @@ function CustomerDashboardInner() {
   async function fetchShops(lat?: number, lng?: number) {
     const { data } = await supabase
       .from("profiles")
-      .select("id, name, shop_name, latitude, longitude, is_live, offers_delivery, offers_pickup, shopfront_image")
+      .select("id, name, shop_name, latitude, longitude, is_live, offers_delivery, offers_pickup, shopfront_image, delivery_range_km")
       .eq("role", "shopkeeper")
       .eq("is_live", true);
     if (!data) return;
-    const MAX_KM = 2;
     const nearby = data
       .map((s: any) => {
         const dist = (lat && lng && s.latitude && s.longitude)
-          ? distance(lat, lng, s.latitude, s.longitude) : 999;
+          ? distance(lat, lng, s.latitude, s.longitude) : 0;
         return { ...s, distance: dist };
       })
-      .filter((s: any) => s.distance <= MAX_KM)
+      .filter((s: any) => {
+        if (!lat || !lng) return true; // no location — show all
+        // Use shop's own delivery range (capped at 2km max)
+        const shopRange = Math.min(s.delivery_range_km || 2, 2);
+        return s.distance <= shopRange;
+      })
       .sort((a: any, b: any) => a.distance - b.distance);
     setNearbyShops(nearby);
   }
@@ -1169,12 +1298,13 @@ function CustomerDashboardInner() {
   // Products for search
   const searchResults = search.trim()
     ? sortWithSponsored(
-        // Search across ALL live shop products (no distance cap) — nearby shown first
+        // Search ALL products including loose products and all categories
         (allProductsRef.current.length > 0 ? allProductsRef.current : products)
           .filter((p) =>
             (p.name ?? "").toLowerCase().includes(search.toLowerCase()) ||
             (p.brand ?? "").toLowerCase().includes(search.toLowerCase()) ||
-            (p.category ?? "").toLowerCase().includes(search.toLowerCase())
+            (p.category ?? "").toLowerCase().includes(search.toLowerCase()) ||
+            (p.size ?? "").toLowerCase().includes(search.toLowerCase())
           )
           .sort((a, b) => {
             // In-stock first, then by distance
@@ -1281,22 +1411,56 @@ function CustomerDashboardInner() {
                 🏪 {displayShopName}{multiShop && qty === 0 ? <span style={{color:"#1A6BFF",marginLeft:4,fontSize:10}}>▼</span> : ""}
               </div>
             : <div className="product-shop-tag" style={{color:"#FF6B2B"}}>Not available nearby</div>}
-          <div className="product-footer">
-            <div className="product-price" style={{color: p.inStock ? "#0D1B3E" : "#B0BACC"}}>
-              {p.inStock ? `₹${displayPrice}` : "—"}
+          {/* Loose product — amount input */}
+          {p.is_loose && p.inStock ? (
+            <div style={{marginTop:6}} onClick={e => e.stopPropagation()}>
+              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:4}}>
+                <span style={{fontSize:13,fontWeight:900,color:"#1A6BFF"}}>₹{p.price}<span style={{fontSize:10,fontWeight:600,color:"#8A96B5"}}>/{p.loose_unit||"kg"}</span></span>
+                {looseAmounts[p.id || p.product_id] && parseFloat(looseAmounts[p.id || p.product_id]) > 0 && (
+                  <span style={{fontSize:10,color:"#00875A",fontWeight:700}}>≈ {(parseFloat(looseAmounts[p.id || p.product_id])/p.price).toFixed(2)}{p.loose_unit||"kg"}</span>
+                )}
+              </div>
+              <div style={{display:"flex",gap:6}}>
+                <input type="number" placeholder="Enter ₹ amount"
+                  value={looseAmounts[p.id || p.product_id] || ""}
+                  onChange={e => setLooseAmounts(prev => ({...prev, [p.id || p.product_id]: e.target.value}))}
+                  onClick={e => e.stopPropagation()}
+                  style={{flex:1,padding:"7px 9px",border:"1.5px solid #E4EAFF",borderRadius:8,fontSize:12,fontFamily:"inherit",outline:"none",minWidth:0,width:"100%"}}/>
+                <button onClick={e => {
+                  e.stopPropagation();
+                  const amt = parseFloat(looseAmounts[p.id || p.product_id] || "0");
+                  if (!amt || amt <= 0) { alert("Enter an amount in ₹"); return; }
+                  const minAmt = Math.ceil((p.loose_min_qty||0.25) * p.price);
+                  const maxAmt = Math.floor((p.loose_max_qty||10) * p.price);
+                  if (amt < minAmt) { alert(`Minimum order is ₹${minAmt} (${p.loose_min_qty||0.25} ${p.loose_unit||"kg"})`); return; }
+                  if (amt > maxAmt) { alert(`Maximum order is ₹${maxAmt} (${p.loose_max_qty||10} ${p.loose_unit||"kg"})`); return; }
+                  const qty = parseFloat((amt / p.price).toFixed(3));
+                  addProductFromShop(p, {...(p.shopOptions?.[0] || p), customAmount: amt, customQty: qty, name: `${p.name} (${qty}${p.loose_unit||"kg"})`, price: amt, quantity: 1});
+                  setLooseAmounts(prev => ({...prev, [p.id || p.product_id]: ""}));
+                }}
+                  style={{padding:"7px 11px",background:"#1A6BFF",color:"white",border:"none",borderRadius:8,fontSize:12,fontWeight:800,cursor:"pointer",fontFamily:"inherit",flexShrink:0}}>
+                  Add
+                </button>
+              </div>
             </div>
-            {p.inStock ? (
-              qty === 0
-                ? <button className="add-btn" onClick={handleAdd}>+</button>
-                : <div className="qty-ctrl">
-                    <button className="qty-btn" onClick={() => updateCart(cartItem, -1)}>−</button>
-                    <div className="qty-num">{qty}</div>
-                    <button className="qty-btn" onClick={() => updateCart(cartItem, 1)} disabled={qty >= (displayShop?.stock ?? 99)} style={{opacity: qty >= (displayShop?.stock ?? 99) ? 0.4 : 1, cursor: qty >= (displayShop?.stock ?? 99) ? "not-allowed" : "pointer"}}>+</button>
-                  </div>
-            ) : (
-              <button className="add-btn" disabled>+</button>
-            )}
-          </div>
+          ) : (
+            <div className="product-footer">
+              <div className="product-price" style={{color: p.inStock ? "#0D1B3E" : "#B0BACC"}}>
+                {p.inStock ? `₹${displayPrice}` : "—"}
+              </div>
+              {p.inStock ? (
+                qty === 0
+                  ? <button className="add-btn" onClick={handleAdd}>+</button>
+                  : <div className="qty-ctrl">
+                      <button className="qty-btn" onClick={() => updateCart(cartItem, -1)}>−</button>
+                      <div className="qty-num">{qty}</div>
+                      <button className="qty-btn" onClick={() => updateCart(cartItem, 1)} disabled={qty >= (displayShop?.stock ?? 99)} style={{opacity: qty >= (displayShop?.stock ?? 99) ? 0.4 : 1, cursor: qty >= (displayShop?.stock ?? 99) ? "not-allowed" : "pointer"}}>+</button>
+                    </div>
+              ) : (
+                <button className="add-btn" disabled>+</button>
+              )}
+            </div>
+          )}
         </div>
       </div>
     );
@@ -1426,7 +1590,7 @@ function CustomerDashboardInner() {
             </div>
           ) : (
             <div className="shops-list">
-              <div className="shops-count">📍 {nearbyShops.length} shop{nearbyShops.length!==1?"s":""} open within 2km</div>
+              <div className="shops-count">📍 {nearbyShops.length} shop{nearbyShops.length!==1?"s":""} near you</div>
               {featuredShops.length > 0 && nearbyShops.some((s:any) => featuredShops.find((a:any) => a.shop_id === s.id)) &&
                 nearbyShops.filter((s:any) => featuredShops.find((a:any) => a.shop_id === s.id)).map((shop:any) => (
                   <div key={"feat_"+shop.id} className="shop-card" onClick={() => openShop(shop)} style={{border:"2px solid #FFB800",position:"relative"}}>
@@ -1628,7 +1792,7 @@ function CustomerDashboardInner() {
                         ✅ Available nearby — {masterSearchResults.filter(p=>p.inStock).length} product{masterSearchResults.filter(p=>p.inStock).length!==1?"s":""}
                       </div>
                       <div className="search-grid" style={{marginBottom:16}}>
-                        {masterSearchResults.filter(p => p.inStock).map((p) => <ProductCard key={p.product_id} p={p} />)}
+                        {masterSearchResults.filter(p => p.inStock).map((p) => <ProductCard key={p.product_id || p.id} p={p} />)}
                       </div>
                     </>
                   )}
