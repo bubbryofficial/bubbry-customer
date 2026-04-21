@@ -12,7 +12,7 @@ const CAT_ICONS: Record<string, string> = {
   "Sauces & Spreads":"🥫","Cold Drinks & Juices":"🥤","Chicken, Meat & Fish":"🍗",
   "Baby Care":"🍼","Pharma & Wellness":"💊","Cleaning Essentials":"🧹",
   "Home & Office":"🏠","Personal Care":"🪥","Pet Care":"🐾",
-  "Paan Corner":"🌿","Organic & Healthy Living":"🥗","Other":"🛍️",
+  "Paan Corner":"🌿","Organic & Healthy Living":"🥗","Loose Products":"🧺","Other":"🛍️",
 };
 
 const MINI_BANNERS = [
@@ -70,7 +70,7 @@ body { font-family: 'Plus Jakarta Sans', sans-serif; background: #F4F6FB; }
 .main-layout { display: flex; height: calc(100vh - 130px); overflow: hidden; }
 
 /* LEFT SIDEBAR */
-.sidebar { width: 82px; flex-shrink: 0; background: white; border-right: 1.5px solid #E4EAFF; overflow-y: auto; overflow-x: hidden; }
+.sidebar { width: 82px; flex-shrink: 0; background: white; border-right: 1.5px solid #E4EAFF; overflow-y: auto; overflow-x: hidden; padding-bottom: 80px; }
 .sidebar::-webkit-scrollbar { display: none; }
 .sidebar-item { display: flex; flex-direction: column; align-items: center; gap: 5px; padding: 12px 4px; cursor: pointer; border-left: 3px solid transparent; transition: all 0.15s; position: relative; }
 .sidebar-item.active { border-left-color: #1A6BFF; background: #EBF1FF; }
@@ -820,6 +820,7 @@ function CustomerDashboardInner() {
     // Group shop_products by product_id — keep ALL shop options sorted by distance
     const spByProduct: Record<string, any[]> = {};
     liveSpData.forEach((sp:any) => {
+      if (sp.is_loose || !sp.product_id) return; // loose handled separately
       if (!spByProduct[sp.product_id]) spByProduct[sp.product_id] = [];
       const shop = shopMap[sp.shop_id];
       const dist = (lat && lng && shop?.latitude && shop?.longitude)
@@ -1102,7 +1103,7 @@ function CustomerDashboardInner() {
       : { data: [] };
     const mpMap: any = {};
     (mpData || []).forEach((mp: any) => { mpMap[mp.id] = mp; });
-    const items = spData.map((sp: any) => ({
+    const items = spData.filter((sp:any) => !sp.is_loose && sp.product_id).map((sp: any) => ({
       id: sp.id,
       product_id: sp.product_id,
       name: sp.name || mpMap[sp.product_id]?.name || "Product",
@@ -1322,11 +1323,18 @@ function CustomerDashboardInner() {
     : [];
   const allProductCats = [...new Set(products.map((p:any) => p.category).filter(Boolean))];
   const extraCats = allProductCats.filter((cat:string) => !baseCatOrder.includes(cat));
-  const catOrder = [...baseCatOrder, ...extraCats];
+  // Always include "Loose Products" in catOrder if any exist, before "Other"
+  const hasLoose = products.some((p:any) => p.is_loose);
+  const extraCatsFiltered = extraCats.filter((c:string) => c !== "Loose Products" && c !== "Other");
+  const hasOther = extraCats.includes("Other");
+  const looseCat = hasLoose ? ["Loose Products"] : [];
+  const otherCat = hasOther ? ["Other"] : [];
+  const catOrder = [...baseCatOrder, ...extraCatsFiltered, ...looseCat, ...otherCat];
 
   const grouped: Record<string, any[]> = {};
   sortWithSponsored(applyFilters(products)).forEach((p) => {
-    const cat = p.category || "Other";
+    // Loose products go ONLY into "Loose Products" category, never "Other"
+    const cat = p.is_loose ? "Loose Products" : (p.category || "Other");
     if (!grouped[cat]) grouped[cat] = [];
     grouped[cat].push(p);
   });
@@ -1334,6 +1342,7 @@ function CustomerDashboardInner() {
   // Master grouped — used on home tab when "All Products" filter is active
   const masterGrouped: Record<string, any[]> = {};
   allMasterProducts.forEach((p) => {
+    if (p.is_loose) return;
     const cat = p.category || "Other";
     if (!masterGrouped[cat]) masterGrouped[cat] = [];
     masterGrouped[cat].push(p);
@@ -1346,7 +1355,10 @@ function CustomerDashboardInner() {
   // Products for active category tab — sponsored first
   // When "All Products" filter is active (applied.inStock=false), include out-of-stock
   const tabProducts = activeTab === "home" ? [] : sortWithSponsored(
-    applyFilters(products.filter((p) => p.category === activeTab))
+    applyFilters(products.filter((p) => {
+      if (activeTab === "Loose Products") return p.is_loose;
+      return p.category === activeTab && !p.is_loose;
+    }))
   );
 
   const cartTotal = cart.reduce((s,i) => s + i.price * (i.quantity ?? 1), 0);
@@ -1944,7 +1956,9 @@ function CustomerDashboardInner() {
                 /* IN STOCK ONLY MODE — show nearby live shop products grouped by category */
                 catOrder.filter((cat:string) => grouped[cat]?.length > 0).map((cat:string) => {
                   const items = grouped[cat] || [];
-                  const inStockCount = items.filter((p:any) => p.inStock).length;
+                  const inStockCount = cat === "Loose Products"
+                    ? items.length // loose products are always "in stock" by nature
+                    : items.filter((p:any) => p.inStock).length;
                   return (
                     <div key={cat} id={`cat-${cat}`}>
                       <div className="cat-section-hdr">
@@ -1952,10 +1966,10 @@ function CustomerDashboardInner() {
                           <span>{CAT_ICONS[cat] ?? "🛍️"}</span>
                           <span>{cat}</span>
                         </div>
-                        <div className="cat-section-count">{inStockCount} in stock</div>
+                        <div className="cat-section-count">{inStockCount}{cat === "Loose Products" ? " items" : " in stock"}</div>
                       </div>
                       <div className="cat-products-grid">
-                        {items.map((p:any) => <ProductCard key={p.product_id} p={p} />)}
+                        {items.map((p:any) => <ProductCard key={p.id || p.product_id} p={p} />)}
                       </div>
                     </div>
                   );
