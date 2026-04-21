@@ -246,7 +246,7 @@ export default function MyOrders() {
     try {
       const { data: ordersData, error } = await supabase
         .from("orders")
-        .select("id, group_id, quantity, order_type, delivery_address, status, created_at, product_id, shop_id, delivery_otp, payment_method, amount_paid, amount_cash, cancellation_reason, cancelled_by, cancellation_proof, refund_upi, refund_screenshot, rider_id")
+        .select("id, group_id, quantity, order_type, delivery_address, status, created_at, product_id, shop_id, delivery_otp, payment_method, amount_paid, amount_cash, cancellation_reason, cancelled_by, cancellation_proof, refund_upi, refund_screenshot, rider_id, loose_product_name, loose_unit, loose_qty")
         .eq("customer_id", userId)
         .order("created_at", { ascending: false });
 
@@ -281,9 +281,15 @@ export default function MyOrders() {
       const groupMap: Record<string, any> = {};
       for (const order of ordersData) {
         const key = order.group_id || order.id;
-        const sp = spMap[order.product_id + "_" + order.shop_id] || {};
-        const productName = sp.name || "Product";
-        const productPrice = sp.price || 0;
+        const sp = order.product_id ? (spMap[order.product_id + "_" + order.shop_id] || {}) : {};
+        const isLoose = !order.product_id && order.loose_product_name;
+        const productName = isLoose
+          ? `${order.loose_product_name} (${order.loose_qty || ""}${order.loose_unit || "kg"})`
+          : (sp.name || "Product");
+        // For loose products use amount paid as the price (sp.price would be 0)
+        const productPrice = isLoose
+          ? (order.amount_paid || 0) + (order.amount_cash || 0)
+          : (sp.price || 0);
 
         if (!groupMap[key]) {
           groupMap[key] = {
@@ -316,8 +322,11 @@ export default function MyOrders() {
           product_name: productName,
           quantity: order.quantity || 1,
           price: productPrice,
+          is_loose: !!isLoose,
         });
-        groupMap[key].total += productPrice * (order.quantity || 1);
+        // Loose product total = the amount paid (already the full price)
+        // Regular product total = price × qty
+        groupMap[key].total += isLoose ? productPrice : productPrice * (order.quantity || 1);
         // Keep otp from any row that has it
         if (order.delivery_otp && !groupMap[key].delivery_otp) groupMap[key].delivery_otp = order.delivery_otp;
 
@@ -413,7 +422,9 @@ export default function MyOrders() {
                       <div style={{fontSize:14,fontWeight:700,color:"#0D1B3E"}}>{item.product_name}</div>
                       <div style={{fontSize:12,color:"#8A96B5",fontWeight:500}}>Qty: {item.quantity}</div>
                     </div>
-                    <div style={{fontSize:14,fontWeight:800,color:"#1A6BFF"}}>₹{item.price * item.quantity}</div>
+                    <div style={{fontSize:14,fontWeight:800,color:"#1A6BFF"}}>
+                        ₹{item.is_loose ? item.price : item.price * item.quantity}
+                      </div>
                   </div>
                 ))}
                 <div style={{display:"flex",justifyContent:"space-between",paddingTop:10,marginTop:4,borderTop:"1.5px solid #E4EAFF",marginBottom:10}}>

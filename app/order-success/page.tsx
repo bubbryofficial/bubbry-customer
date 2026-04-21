@@ -6,9 +6,22 @@ export default function OrderSuccess() {
   const router = useRouter();
   const [count, setCount] = useState(5);
   useEffect(() => {
-    const iv = setInterval(() => setCount(c => { if (c <= 1) { clearInterval(iv); router.push("/my-orders"); return 0; } return c - 1; }), 1000);
+    const iv = setInterval(() => {
+      setCount(c => {
+        if (c <= 1) {
+          clearInterval(iv);
+          return 0;
+        }
+        return c - 1;
+      });
+    }, 1000);
     return () => clearInterval(iv);
   }, []);
+
+  // Separate effect to navigate when count hits 0
+  useEffect(() => {
+    if (count === 0) router.push("/my-orders");
+  }, [count]);
 
   return (
     <div style={{ minHeight: "100vh", background: "linear-gradient(160deg, #EBF1FF 0%, #F4F6FB 60%)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", fontFamily: "'Plus Jakarta Sans', sans-serif", padding: 24 }}>

@@ -1155,6 +1155,15 @@ function CustomerDashboardInner() {
       shop_name: shopOpt.shop_name,
       price: shopOpt.price,
       stock: shopOpt.stock,
+      // Preserve loose product fields from shopOpt
+      ...(shopOpt.customQty !== undefined && { customQty: shopOpt.customQty }),
+      ...(shopOpt.customAmount !== undefined && { customAmount: shopOpt.customAmount }),
+      ...(shopOpt.is_loose !== undefined && { is_loose: shopOpt.is_loose }),
+      ...(shopOpt.loose_unit !== undefined && { loose_unit: shopOpt.loose_unit }),
+      ...(shopOpt.loose_min_qty !== undefined && { loose_min_qty: shopOpt.loose_min_qty }),
+      ...(shopOpt.loose_max_qty !== undefined && { loose_max_qty: shopOpt.loose_max_qty }),
+      // Override name if shopOpt has a custom name (e.g. "Atta (1.82kg)")
+      ...(shopOpt.name !== undefined && { name: shopOpt.name }),
     };
     // Enforce single-shop rule
     if (cart.length > 0 && cartShopId && shopOpt.shop_id !== cartShopId) {

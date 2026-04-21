@@ -248,10 +248,15 @@ export default function CheckoutPage() {
     for (const item of cart) {
       const { error } = await supabase.from("orders").insert({
         group_id: groupId,
-        product_id: item.product_id,
+        // For loose products: product_id is null, use loose_product_id to track shop_products row
+        product_id: item.is_loose ? null : item.product_id,
+        loose_product_id: item.is_loose ? (item.id || item.product_id) : null,
+        loose_product_name: item.is_loose ? item.name : null,
+        loose_unit: item.is_loose ? (item.loose_unit || "kg") : null,
+        loose_qty: item.is_loose ? (item.customQty || item.quantity || 1) : null,
         shop_id: item.shop_id,
         customer_id: user.id,
-        quantity: item.quantity ?? 1,
+        quantity: item.is_loose ? 1 : (item.quantity ?? 1),
         order_type: orderType,
         delivery_address: orderType === "delivery" ? address : null,
         delivery_instructions: orderType === "delivery" ? deliveryInstructions : null,
@@ -260,6 +265,7 @@ export default function CheckoutPage() {
         status: "pending",
         payment_method: paymentMethod,
         payment_proof: paymentProofUrl,
+        // For loose products, price = the amount customer entered
         amount_paid: paymentMethod === "upi" ? grandTotal : upiAdvance,
         amount_cash: paymentMethod === "cod" ? cashAmount : 0,
       });

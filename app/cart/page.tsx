@@ -247,13 +247,20 @@ export default function CartPage() {
                   </div>
                   <div className="item-info">
                     <div className="item-name">{item.name}</div>
-                    <div className="item-price">₹{item.price} each</div>
+                    <div className="item-price">{item.is_loose ? `₹${item.price} total` : `₹${item.price} each`}</div>
                   </div>
-                  <div className="qty-ctrl">
-                    <button className="qty-btn" onClick={() => updateCart(item.id, -1)}>−</button>
-                    <div className="qty-num">{item.quantity ?? 1}</div>
-                    <button className="qty-btn" onClick={() => updateCart(item.id, 1)} disabled={(item.quantity??1) >= (item.stock??99)} style={{opacity:(item.quantity??1)>=(item.stock??99)?0.4:1,cursor:(item.quantity??1)>=(item.stock??99)?"not-allowed":"pointer"}}>+</button>
-                  </div>
+                  {item.is_loose ? (
+                    // Loose products: show qty in kg/litre, no +/- (fixed amount)
+                    <div style={{background:"#EBF1FF",borderRadius:10,padding:"6px 10px",fontSize:12,fontWeight:800,color:"#1A6BFF",whiteSpace:"nowrap"}}>
+                      {item.customQty ?? item.quantity ?? 1} {item.loose_unit || "kg"}
+                    </div>
+                  ) : (
+                    <div className="qty-ctrl">
+                      <button className="qty-btn" onClick={() => updateCart(item.id, -1)}>−</button>
+                      <div className="qty-num">{item.quantity ?? 1}</div>
+                      <button className="qty-btn" onClick={() => updateCart(item.id, 1)} disabled={(item.quantity??1) >= (item.stock??99)} style={{opacity:(item.quantity??1)>=(item.stock??99)?0.4:1,cursor:(item.quantity??1)>=(item.stock??99)?"not-allowed":"pointer"}}>+</button>
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
