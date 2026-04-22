@@ -109,7 +109,7 @@ export default function NotificationsPage() {
     <div style={{ minHeight: "100vh", background: "#F4F6FB", fontFamily: "'Plus Jakarta Sans', sans-serif" }}>
       <style>{CSS}</style>
       <div className="top-bar">
-        <button className="back-btn" onClick={() => router.back()}>←</button>
+        <button className="back-btn" onClick={() => { if (window.history.length > 1) router.back(); else router.push("/customer-dashboard"); }}>←</button>
         <div className="page-title">
           🔔 Notifications
           {notifs.filter(n => !n.read).length > 0 && <span className="badge">{notifs.filter(n => !n.read).length}</span>}
